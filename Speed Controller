@@ -1,0 +1,76 @@
+import machine
+import utime
+import micropython
+from machine import Pin
+import sh1106
+
+
+class Rotary:
+    ROT_CW = 1
+    ROT_CCW = 2
+
+    def __init__(self, a, b):
+        self.handlers = []
+
+        self.a_pin = Pin(a, Pin.IN)
+        self.b_pin = Pin(b, Pin.IN)
+
+        self.last_status = (self.a_pin.value() << 1) | self.b_pin.value()
+
+        self.a_pin.irq(handler=self.rotary_change, trigger=(Pin.IRQ_FALLING | Pin.IRQ_RISING))
+        self.b_pin.irq(handler=self.rotary_change, trigger=(Pin.IRQ_FALLING | Pin.IRQ_RISING))
+
+    def rotary_change(self, pin):
+        new_status = (self.a_pin.value() << 1) | self.b_pin.value()
+        if new_status == self.last_status:
+            return
+        transition = (self.last_status << 2) | new_status
+        if transition == 0b1110:
+            self.call_handlers(Rotary.ROT_CCW)
+        elif transition == 0b1101:
+            self.call_handlers(Rotary.ROT_CW)
+        self.last_status = new_status
+
+    def add_handler(self, handler):
+        self.handlers.append(handler)
+
+    def call_handlers(self, direction):
+        for handler in self.handlers:
+            handler(direction)
+
+
+class SpeedController: #set the following values as per need
+    REQUIRED_SPEED = 20
+    MAX_SPEED = 30
+    MIN_SPEED = 0
+    INCREMENT = 1
+    UNIT = "m/m"
+
+    def __init__(self, sda_pin, scl_pin):
+        self.oled = sh1106.SH1106_I2C(128, 64, machine.I2C(0, sda=machine.Pin(sda_pin), scl=machine.Pin(scl_pin)), None,
+                                      0x3c, rotate=180)
+        self.current_speed = 0
+
+    def adjust_speed(self, direction):
+        if direction == Rotary.ROT_CW:
+            self.current_speed = min(self.current_speed + self.INCREMENT, self.MAX_SPEED)
+        elif direction == Rotary.ROT_CCW:
+            self.current_speed = max(self.current_speed - self.INCREMENT, self.MIN_SPEED)
+
+    def display_speed(self):
+        self.oled.fill(0)
+        self.oled.text("Required: {} {}".format(self.REQUIRED_SPEED, self.UNIT), 0, 0)
+        self.oled.text("Current: {} {}".format(self.current_speed, self.UNIT), 0, 16)
+        self.oled.show()
+
+    def run(self):
+        rotary = Rotary(26, 27)
+        rotary.add_handler(self.adjust_speed)
+
+        while True:
+            self.display_speed()
+            # utime.sleep(1)  # Adjust the sleep time as needed
+
+
+speed_controller = SpeedController(16, 17)
+speed_controller.run()
